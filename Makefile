@@ -26,6 +26,9 @@ ANDROID_ARGS := \
 ANDROID_BUILD := @make  --no-print-dir -f $(ANDROID_NDK_HOME)/build/core/build-local.mk $(ANDROID_ARGS)
 
 build:
+ifeq (,$(wildcard include/frameworks))
+	make -C include
+endif
 	$(ANDROID_BUILD)
 
 clean:
@@ -34,6 +37,17 @@ clean:
 
 exec:
 	@adb push $(NDK_OUT)/$(APP_ABI)/$(LOCAL_MODULE) /data/local/tmp/ > /dev/null
-	@adb shell "cd /data/local/tmp/ && busybox chmod +x $(LOCAL_MODULE) && ./$(LOCAL_MODULE)"
+	@adb shell "cd /data/local/tmp/ && \
+		busybox chmod +x $(LOCAL_MODULE) && \
+		(pidof $(LOCAL_MODULE) && killall $(LOCAL_MODULE) || true ) && \
+		./$(LOCAL_MODULE)"
 
-.PHONY: build clean exec
+libs:
+	$(ANDROID_NDK_HOME)/ndk-build \
+	NDK_PROJECT_PATH=$(PWD)/libs \
+	APP_BUILD_SCRIPT=$(PWD)/libs/Android.mk \
+	APP_ALLOW_MISSING_DEPS=true \
+	APP_ABI=$(APP_ABI) \
+	APP_PLATFORM=android-19
+
+.PHONY: build clean exec libs

@@ -1,1 +1,5 @@
 build
+include/external
+include/frameworks
+include/hardware
+include/system
