@@ -1,8 +1,9 @@
 #include <stdio.h>
+#include "server.h"
 
 
 int main(int argc, char const *argv[])
 {
     printf("YES, IM main...\n");
-    return 0;
+    return server_start();
 }
