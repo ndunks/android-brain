@@ -7,10 +7,11 @@ endif
 
 PROJECT_PATH := $(PWD)
 BUILD_PATH := $(PWD)/build
-NDK_OUT := $(BUILD_PATH)/obj
-NDK_LIBS_OUT := $(BUILD_PATH)/libs
+NDK_OUT := $(BUILD_PATH)
+NDK_LIBS_OUT := $(BUILD_PATH)
 APP_BUILD_SCRIPT  := $(PWD)/Android.mk
 APP_ABI := armeabi-v7a
+LOCAL_MODULE:= android-brain
 
 ANDROID_ARGS := \
 	PROJECT_PATH=$(PROJECT_PATH) \
@@ -31,4 +32,8 @@ clean:
 	$(ANDROID_BUILD) clean
 	@rm -rf $(BUILD_PATH)/* 2>/dev/null
 
-.PHONY: build clean
+exec:
+	@adb push $(NDK_OUT)/$(APP_ABI)/$(LOCAL_MODULE) /data/local/tmp/ > /dev/null
+	@adb shell "cd /data/local/tmp/ && busybox chmod +x $(LOCAL_MODULE) && ./$(LOCAL_MODULE)"
+
+.PHONY: build clean exec
