@@ -1,0 +1,18 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/src/**",
+                "/data/android/sdk/ndk-bundle/sysroot/usr/include",
+                "/data/android/sdk/ndk-bundle/sources/cxx-stl/llvm-libc++/include"
+            ],
+            "defines": [],
+            "compilerPath": "/data/android/sdk/ndk-bundle/toolchains/llvm/prebuilt/linux-x86_64/bin/clang",
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "clang-x64"
+        }
+    ],
+    "version": 4
+}
