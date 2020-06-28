@@ -9,15 +9,32 @@
 #include <binder/ProcessState.h>
 #include <gui/SurfaceComposerClient.h>
 #include <gui/ISurfaceComposer.h>
+#include <ui/PixelFormat.h>
+#include <SkImageEncoder.h>
+#include <SkBitmap.h>
+#include <SkData.h>
+#include <SkStream.h>
 
 #include "server.h"
-//#include "screen.h"
 
+using namespace android;
+
+static SkBitmap::Config flinger2skia(PixelFormat f)
+{
+    switch (f)
+    {
+    case PIXEL_FORMAT_RGB_565:
+        return SkBitmap::kRGB_565_Config;
+    default:
+        return SkBitmap::kARGB_8888_Config;
+    }
+}
 static const char http_version[] = "HTTP/1.1",
                   header_ok[] = "200 OK",
                   header_bad_request[] = "400 Bad Request",
                   header_not_found[] = "404 Not Found",
                   header_not_allowed[] = "405 Method Not Allowed",
+                  header_internal_error[] = "500 Internal Server Error",
                   header_content[] = "Connection: close\r\nContent-Length: %d\r\nContent-Type: %s";
 
 static size_t http_header(char *buf, const char *http_status, const char *type, size_t size)
@@ -36,10 +53,26 @@ static size_t http_header(char *buf, const char *http_status, const char *type, 
 
 static void handle_connection(int fd)
 {
-    int client_fd, bufSize = 65535, size;
+    int client_fd, bufSize = 65535;
+    uint32_t w, s, h, f;
     struct sockaddr_in client;
     socklen_t clientLen;
     char *buf = (char *)malloc(bufSize), *path;
+    ProcessState::self()->startThreadPool();
+    void const *base = 0;
+    SkDynamicMemoryWStream stream;
+    size_t size = 0;
+    ScreenshotClient screenshot;
+    SkBitmap b;
+    SkData *streamData;
+
+    sp<IBinder> display = SurfaceComposerClient::getBuiltInDisplay(ISurfaceComposer::eDisplayIdMain);
+    if (display == NULL)
+    {
+        fprintf(stderr, "Can't open display\n");
+        return;
+    }
+
     while (1)
     {
         clientLen = sizeof(client);
@@ -72,9 +105,32 @@ static void handle_connection(int fd)
         }
         else
         {
-            size = http_header(buf, header_ok, "text/plain", 0);
-            write(client_fd, buf, size);
+            if (screenshot.update(display) == NO_ERROR)
+            {
+                base = screenshot.getPixels();
+                w = screenshot.getWidth();
+                h = screenshot.getHeight();
+                s = screenshot.getStride();
+                f = screenshot.getFormat();
+                b.setConfig(flinger2skia(f), w, h, s * bytesPerPixel(f));
+                b.setPixels((void *)base);
+                SkImageEncoder::EncodeStream(&stream, b,
+                                             SkImageEncoder::kJPEG_Type, SkImageEncoder::kDefaultQuality);
+                streamData = stream.copyToData();
+                size = http_header(buf, header_ok, "image/png", streamData->size());
+                write(client_fd, buf, size);
+                write(client_fd, streamData->data(), streamData->size());
+                streamData->unref();
+                stream.reset();
+            }
+            else
+            {
+                fprintf(stderr, "Error capturing screen\n");
+                size = http_header(buf, header_internal_error, "text/plain", 0);
+                write(client_fd, buf, size);
+            }
         }
+
         close(client_fd);
     }
 }
