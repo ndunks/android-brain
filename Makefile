@@ -35,7 +35,7 @@ clean:
 	$(ANDROID_BUILD) clean
 	@rm -rf $(BUILD_PATH)/* 2>/dev/null
 
-exec:
+exec: build
 	@adb push $(NDK_OUT)/$(APP_ABI)/$(LOCAL_MODULE) /data/local/tmp/ > /dev/null
 	@adb shell "cd /data/local/tmp/ && \
 		busybox chmod +x $(LOCAL_MODULE) && \
