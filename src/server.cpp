@@ -6,33 +6,21 @@
 #include <netinet/in.h>
 #include <time.h>
 #include <pthread.h>
+#include <binder/ProcessState.h>
+#include <gui/SurfaceComposerClient.h>
+#include <gui/ISurfaceComposer.h>
 
 #include "server.h"
-#include "screen.h"
+//#include "screen.h"
 
-const char http_version[] = "HTTP/1.1",
-           header_ok[] = "200 OK",
-           header_bad_request[] = "400 Bad Request",
-           header_not_found[] = "404 Not Found",
-           header_not_allowed[] = "405 Method Not Allowed",
-           header_content[] = "Connection: close\r\nContent-Length: %d\r\nContent-Type: %s";
+static const char http_version[] = "HTTP/1.1",
+                  header_ok[] = "200 OK",
+                  header_bad_request[] = "400 Bad Request",
+                  header_not_found[] = "404 Not Found",
+                  header_not_allowed[] = "405 Method Not Allowed",
+                  header_content[] = "Connection: close\r\nContent-Length: %d\r\nContent-Type: %s";
 
-char *print_addr(struct sockaddr_in *addr)
-{
-    uint32_t ip = ntohl(addr->sin_addr.s_addr);
-    uint16_t port = ntohs(addr->sin_port);
-    // maks: xxx.xxx.xxx.xxx:xxxxx
-    char *buff = malloc(22);
-    sprintf(buff, "%d.%d.%d.%d:%d",
-            ip >> 24 & 0xff,
-            ip >> 16 & 0xff,
-            ip >> 8 & 0xff,
-            ip >> 0 & 0xff,
-            port);
-    return buff;
-}
-
-size_t http_header(char *buf, const char *http_status, const char *type, size_t size)
+static size_t http_header(char *buf, const char *http_status, const char *type, size_t size)
 {
     if (type == NULL)
     {
@@ -46,12 +34,12 @@ size_t http_header(char *buf, const char *http_status, const char *type, size_t 
     return header_size;
 }
 
-void handle_connection(int fd)
+static void handle_connection(int fd)
 {
     int client_fd, bufSize = 65535, size;
     struct sockaddr_in client;
     socklen_t clientLen;
-    char *buf = malloc(bufSize), *path;
+    char *buf = (char *)malloc(bufSize), *path;
     while (1)
     {
         clientLen = sizeof(client);
