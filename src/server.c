@@ -10,6 +10,13 @@
 #include "server.h"
 #include "screen.h"
 
+const char http_version[] = "HTTP/1.1",
+           header_ok[] = "200 OK",
+           header_bad_request[] = "400 Bad Request",
+           header_not_found[] = "404 Not Found",
+           header_not_allowed[] = "405 Method Not Allowed",
+           header_content[] = "Connection: close\r\nContent-Length: %d\r\nContent-Type: %s";
+
 char *print_addr(struct sockaddr_in *addr)
 {
     uint32_t ip = ntohl(addr->sin_addr.s_addr);
@@ -25,18 +32,72 @@ char *print_addr(struct sockaddr_in *addr)
     return buff;
 }
 
-void handle_client(int *fd, struct sockaddr_in *client)
+size_t http_header(char *buf, const char *http_status, const char *type, size_t size)
 {
+    if (type == NULL)
+    {
+        type = "text/plain";
+    }
+
+    size_t header_size = sprintf(buf, "%s %s\r\n", http_version, http_status);
+    header_size += sprintf(buf + header_size, header_content, size, type);
+    strcpy(buf + header_size, "\r\n\r\n");
+    header_size += 4;
+    return header_size;
+}
+
+void handle_connection(int fd)
+{
+    int client_fd, bufSize = 65535, size;
+    struct sockaddr_in client;
+    socklen_t clientLen;
+    char *buf = malloc(bufSize), *path;
+    while (1)
+    {
+        clientLen = sizeof(client);
+        memset(&client, 0, clientLen);
+        printf("Waiting connection...\n");
+        client_fd = accept(fd, (struct sockaddr *)&client, &clientLen);
+        if (client_fd < 0)
+        {
+            printf("Fail accepting client\n");
+            continue;
+        }
+        size = recv(client_fd, buf, bufSize, 0);
+        if (size < 0)
+        {
+            printf("Ignore recv %d bytes\n", size);
+            continue;
+        }
+        buf[size] = 0;
+        printf("%s", buf);
+
+        if (strncmp(buf, "GET", 3) != 0)
+        {
+            size = http_header(buf, header_not_allowed, NULL, 0);
+            write(client_fd, buf, size);
+        }
+        if (strncmp(buf + 3, " / ", 3) != 0)
+        {
+            size = http_header(buf, header_not_found, NULL, 0);
+            write(client_fd, buf, size);
+        }
+        else
+        {
+            size = http_header(buf, header_ok, "text/plain", 0);
+            write(client_fd, buf, size);
+        }
+        close(client_fd);
+    }
 }
 
 int server_start()
 {
     uint16_t port = 1234U;
-    struct sockaddr_in serveraddr, client;
-    socklen_t addrLen = sizeof(struct sockaddr_in), clientLen;
-    int client_fd, fd = socket(AF_INET, SOCK_STREAM, 0), opt_reuseaddr = 1;
-    int bufSize = 65535, recvd;
-    char *buf = malloc(bufSize);
+    struct sockaddr_in serveraddr;
+    socklen_t addrLen = sizeof(struct sockaddr_in);
+    int fd = socket(AF_INET, SOCK_STREAM, 0), opt_reuseaddr = 1;
+
     if (fd == -1)
     {
         fprintf(stderr, "Fail creating socket\n");
@@ -46,7 +107,7 @@ int server_start()
     serveraddr.sin_family = AF_INET;
     serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
     serveraddr.sin_port = htons(port);
-    printf("Listening on %s ", print_addr(&serveraddr));
+    printf("Listening on port %d\n", port);
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt_reuseaddr, sizeof(opt_reuseaddr));
 
     if (bind(fd, (struct sockaddr *)&serveraddr, addrLen) == 0)
@@ -54,34 +115,7 @@ int server_start()
         if (listen(fd, 5) == 0)
         {
             printf("OK\n");
-            while (1)
-            {
-                clientLen = addrLen;
-                memset(&client, 0, addrLen);
-                client_fd = accept(fd, (struct sockaddr *)&client, &clientLen);
-                if (client_fd >= 0)
-                {
-                    recvd = recv(client_fd, buf, bufSize, 0);
-                    if (recvd > 0)
-                    {
-                        buf[recvd] = 0;
-                        printf("%s", buf);
-                        recvd = sprintf(buf, "HTTP/1.1 200 OK\r\nContent-Type:image/png\r\n\r\n");
-                        send(client_fd, buf, recvd, 0);
-                        screen_grab(client_fd);
-                        //fflush(&client_fd);
-                        close(client_fd);
-                    }
-                    else
-                    {
-                        printf("Ignore recv %d bytes\n", recvd);
-                    }
-                }
-                else
-                {
-                    printf("Fail accepting client\n");
-                }
-            }
+            handle_connection(fd);
         }
         else
         {
@@ -96,4 +130,5 @@ int server_start()
         close(fd);
         return 1;
     }
+    printf("Exited\n");
 }
