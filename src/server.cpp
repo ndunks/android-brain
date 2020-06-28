@@ -115,9 +115,9 @@ static void handle_connection(int fd)
                 b.setConfig(flinger2skia(f), w, h, s * bytesPerPixel(f));
                 b.setPixels((void *)base);
                 SkImageEncoder::EncodeStream(&stream, b,
-                                             SkImageEncoder::kJPEG_Type, SkImageEncoder::kDefaultQuality);
+                                             SkImageEncoder::kWEBP_Type, SkImageEncoder::kDefaultQuality);
                 streamData = stream.copyToData();
-                size = http_header(buf, header_ok, "image/png", streamData->size());
+                size = http_header(buf, header_ok, "image/webp", streamData->size());
                 write(client_fd, buf, size);
                 write(client_fd, streamData->data(), streamData->size());
                 streamData->unref();
