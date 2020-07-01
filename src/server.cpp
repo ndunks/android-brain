@@ -9,6 +9,7 @@
 #include <binder/ProcessState.h>
 #include <gui/SurfaceComposerClient.h>
 #include <gui/ISurfaceComposer.h>
+#include <ui/DisplayInfo.h>
 #include <ui/PixelFormat.h>
 #include <SkImageEncoder.h>
 #include <SkBitmap.h>
@@ -54,22 +55,48 @@ static size_t http_header(char *buf, const char *http_status, const char *type, 
 static void handle_connection(int fd)
 {
     int client_fd, bufSize = 65535;
-    uint32_t w, s, h, f;
     struct sockaddr_in client;
     socklen_t clientLen;
     char *buf = (char *)malloc(bufSize), *path;
     ProcessState::self()->startThreadPool();
     void const *base = 0;
     SkDynamicMemoryWStream stream;
-    size_t size = 0;
+    ssize_t size = 0;
     ScreenshotClient screenshot;
     SkBitmap b;
     SkData *streamData;
+    ssize_t bpp;
+    SkBitmap::Config bmpConfig;
+    DisplayInfo mainDpyInfo;
+    uint32_t scalled_width, scalled_height, format, stride;
 
     sp<IBinder> display = SurfaceComposerClient::getBuiltInDisplay(ISurfaceComposer::eDisplayIdMain);
-    if (display == NULL)
+
+    if (SurfaceComposerClient::getDisplayInfo(display, &mainDpyInfo) != NO_ERROR)
     {
-        fprintf(stderr, "Can't open display\n");
+        fprintf(stderr, "ERROR: unable to get display characteristics\n");
+        return;
+    }
+
+    printf("Main display is %dx%d @%.2ffps (orientation=%u)\n",
+           mainDpyInfo.w, mainDpyInfo.h, mainDpyInfo.fps,
+           mainDpyInfo.orientation);
+
+    scalled_width = mainDpyInfo.w / 2;
+    scalled_height = mainDpyInfo.h / 2;
+
+    if (screenshot.update(display, scalled_width, scalled_height) == NO_ERROR)
+    {
+        stride = screenshot.getStride();
+        format = screenshot.getFormat();
+        bpp = bytesPerPixel(format);
+        bmpConfig = flinger2skia(format);
+        b.setConfig(bmpConfig, scalled_width, scalled_height, stride * bpp);
+        printf("Screen format %d: stride %d, scalled %dx%dx%d\n", format, stride, scalled_width, scalled_height, bpp);
+    }
+    else
+    {
+        printf("Fail getting screenshot\n");
         return;
     }
 
@@ -77,7 +104,7 @@ static void handle_connection(int fd)
     {
         clientLen = sizeof(client);
         memset(&client, 0, clientLen);
-        printf("Waiting connection...\n");
+        printf("Waiting connection... ");
         client_fd = accept(fd, (struct sockaddr *)&client, &clientLen);
         if (client_fd < 0)
         {
@@ -85,13 +112,14 @@ static void handle_connection(int fd)
             continue;
         }
         size = recv(client_fd, buf, bufSize, 0);
+        printf("%d bytes\n", size);
         if (size < 0)
         {
             printf("Ignore recv %d bytes\n", size);
             continue;
         }
         buf[size] = 0;
-        printf("%s", buf);
+        printf("<<<<\n%s", buf);
 
         if (strncmp(buf, "GET", 3) != 0)
         {
@@ -105,20 +133,21 @@ static void handle_connection(int fd)
         }
         else
         {
-            if (screenshot.update(display, 360, 640) == NO_ERROR)
+            if (screenshot.update(display, scalled_width, scalled_height) == NO_ERROR)
             {
+
                 base = screenshot.getPixels();
-                w = screenshot.getWidth();
-                h = screenshot.getHeight();
-                s = screenshot.getStride();
-                f = screenshot.getFormat();
-                b.setConfig(flinger2skia(f), w, h, s * bytesPerPixel(f));
+                printf("base %p\n", base);
+
+                //b.setConfig(bmpConfig, scalled_width, scalled_height, stride * bpp);
                 b.setPixels((void *)base);
                 SkImageEncoder::EncodeStream(&stream, b,
-                                             SkImageEncoder::kWEBP_Type, SkImageEncoder::kDefaultQuality);
+                                             SkImageEncoder::kWEBP_Type,
+                                             SkImageEncoder::kDefaultQuality);
                 streamData = stream.copyToData();
                 size = http_header(buf, header_ok, "image/webp", streamData->size());
                 write(client_fd, buf, size);
+                printf(">>>>\n%s-----------\n", buf);
                 write(client_fd, streamData->data(), streamData->size());
                 streamData->unref();
                 stream.reset();
