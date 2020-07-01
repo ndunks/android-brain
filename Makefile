@@ -24,7 +24,7 @@ ANDROID_ARGS := \
 	NDK_PROJECT_PATH=null
 
 ANDROID_BUILD := @make  --no-print-dir -f $(ANDROID_NDK_HOME)/build/core/build-local.mk $(ANDROID_ARGS)
-UNLOCK_SCREEN = input keyevent 26 && input swipe 100 500 100 1450 100
+UNLOCK_SCREEN = input keyevent 26 && input swipe 360 320 360 900 100
 
 build:
 ifeq (,$(wildcard include/frameworks))
@@ -43,13 +43,7 @@ exec: build
 		busybox chmod +x $(LOCAL_MODULE) && \
 		(pidof $(LOCAL_MODULE) && killall $(LOCAL_MODULE) || true ) && \
 		./$(LOCAL_MODULE)"
+watch:
+	nodemon -w src  -x make exec
 
-libs:
-	$(ANDROID_NDK_HOME)/ndk-build \
-	NDK_PROJECT_PATH=$(PWD)/libs \
-	APP_BUILD_SCRIPT=$(PWD)/libs/Android.mk \
-	APP_ALLOW_MISSING_DEPS=true \
-	APP_ABI=$(APP_ABI) \
-	APP_PLATFORM=android-19
-
-.PHONY: build clean exec libs
+.PHONY: build clean exec watch

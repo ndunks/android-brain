@@ -105,7 +105,7 @@ static void handle_connection(int fd)
         }
         else
         {
-            if (screenshot.update(display) == NO_ERROR)
+            if (screenshot.update(display, 360, 640) == NO_ERROR)
             {
                 base = screenshot.getPixels();
                 w = screenshot.getWidth();
@@ -130,7 +130,6 @@ static void handle_connection(int fd)
                 write(client_fd, buf, size);
             }
         }
-
         close(client_fd);
     }
 }
