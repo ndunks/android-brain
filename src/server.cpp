@@ -9,6 +9,7 @@
 #include <binder/ProcessState.h>
 #include <gui/SurfaceComposerClient.h>
 #include <gui/ISurfaceComposer.h>
+#include <binder/IServiceManager.h>
 #include <ui/DisplayInfo.h>
 #include <ui/PixelFormat.h>
 #include <SkImageEncoder.h>
@@ -19,7 +20,6 @@
 #include "server.h"
 
 using namespace android;
-
 static SkBitmap::Config flinger2skia(PixelFormat f)
 {
     switch (f)
@@ -30,6 +30,15 @@ static SkBitmap::Config flinger2skia(PixelFormat f)
         return SkBitmap::kARGB_8888_Config;
     }
 }
+
+static char buf[65535];
+static ScreenshotClient screenshot;
+uint32_t scalled_width, scalled_height;
+static ssize_t size = 0, bpp;
+
+sp<IBinder> display;
+sp<IServiceManager> servicemanager;
+
 static const char http_version[] = "HTTP/1.1",
                   header_ok[] = "200 OK",
                   header_bad_request[] = "400 Bad Request",
@@ -52,25 +61,69 @@ static size_t http_header(char *buf, const char *http_status, const char *type, 
     return header_size;
 }
 
+void send_dump(int fd)
+{
+    char buf[255];
+    Vector<String16> args;
+    sp<IBinder> service = servicemanager->checkService(String16("power"));
+
+    ssize_t size = sprintf(buf, "%s %s\r\n"
+                                "Connection: close\r\n"
+                                "Content-Type: text/plain\r\n\r\n",
+                           http_version, header_ok);
+    write(fd, buf, size);
+    printf("DUMP %s\n", buf);
+    int err = service->dump(fd, args);
+    if (err != 0)
+        printf("error: get power service");
+}
+void send_screenshot(int fd)
+{
+    SkDynamicMemoryWStream stream;
+    SkBitmap b;
+    SkData *streamData;
+    ssize_t bpp;
+    SkBitmap::Config bmpConfig;
+    uint32_t format, stride;
+
+    if (screenshot.update(display, scalled_width, scalled_height) != NO_ERROR)
+    {
+        fprintf(stderr, "Error capturing screen\n");
+        size = http_header(buf, header_internal_error, "text/plain", 0);
+        write(fd, buf, size);
+        return;
+    }
+
+    stride = screenshot.getStride();
+    format = screenshot.getFormat();
+    bpp = bytesPerPixel(format);
+    bmpConfig = flinger2skia(format);
+    b.setConfig(bmpConfig, scalled_width, scalled_height, stride * bpp);
+    b.setPixels((void *)screenshot.getPixels());
+    SkImageEncoder::EncodeStream(&stream, b,
+                                 SkImageEncoder::kWEBP_Type,
+                                 SkImageEncoder::kDefaultQuality);
+    streamData = stream.copyToData();
+    size = http_header(buf, header_ok, "image/webp", streamData->size());
+    write(fd, buf, size);
+    printf(">>>>\n%s-----------\n", buf);
+    write(fd, streamData->data(), streamData->size());
+    streamData->unref();
+    stream.reset();
+}
+
 static void handle_connection(int fd)
 {
     int client_fd, bufSize = 65535;
     struct sockaddr_in client;
     socklen_t clientLen;
-    char *buf = (char *)malloc(bufSize), *path;
-    ProcessState::self()->startThreadPool();
-    void const *base = 0;
-    SkDynamicMemoryWStream stream;
-    ssize_t size = 0;
-    ScreenshotClient screenshot;
-    SkBitmap b;
-    SkData *streamData;
-    ssize_t bpp;
-    SkBitmap::Config bmpConfig;
     DisplayInfo mainDpyInfo;
-    uint32_t scalled_width, scalled_height, format, stride;
+    char *req_version, *method, *path;
 
-    sp<IBinder> display = SurfaceComposerClient::getBuiltInDisplay(ISurfaceComposer::eDisplayIdMain);
+    ProcessState::self()->startThreadPool();
+
+    display = SurfaceComposerClient::getBuiltInDisplay(ISurfaceComposer::eDisplayIdMain);
+    servicemanager = defaultServiceManager();
 
     if (SurfaceComposerClient::getDisplayInfo(display, &mainDpyInfo) != NO_ERROR)
     {
@@ -84,21 +137,6 @@ static void handle_connection(int fd)
 
     scalled_width = mainDpyInfo.w / 2;
     scalled_height = mainDpyInfo.h / 2;
-
-    if (screenshot.update(display, scalled_width, scalled_height) == NO_ERROR)
-    {
-        stride = screenshot.getStride();
-        format = screenshot.getFormat();
-        bpp = bytesPerPixel(format);
-        bmpConfig = flinger2skia(format);
-        b.setConfig(bmpConfig, scalled_width, scalled_height, stride * bpp);
-        printf("Screen format %d: stride %d, scalled %dx%dx%d\n", format, stride, scalled_width, scalled_height, bpp);
-    }
-    else
-    {
-        printf("Fail getting screenshot\n");
-        return;
-    }
 
     while (1)
     {
@@ -119,45 +157,29 @@ static void handle_connection(int fd)
             continue;
         }
         buf[size] = 0;
-        printf("<<<<\n%s", buf);
+        method = strtok(buf, " ");
+        path = strtok(NULL, " ");
+        req_version = strtok(NULL, "\r\n");
+        printf("<<<<\n%s %s\n", method, path);
 
-        if (strncmp(buf, "GET", 3) != 0)
+        if (strcmp(method, "GET") != 0)
         {
             size = http_header(buf, header_not_allowed, NULL, 0);
             write(client_fd, buf, size);
         }
-        if (strncmp(buf + 3, " / ", 3) != 0)
+
+        if (strcmp(path, "/dump") == 0)
         {
-            size = http_header(buf, header_not_found, NULL, 0);
-            write(client_fd, buf, size);
+            send_dump(client_fd);
+        }
+        else if (strcmp(path, "/") == 0)
+        {
+            send_screenshot(client_fd);
         }
         else
         {
-            if (screenshot.update(display, scalled_width, scalled_height) == NO_ERROR)
-            {
-
-                base = screenshot.getPixels();
-                printf("base %p\n", base);
-
-                //b.setConfig(bmpConfig, scalled_width, scalled_height, stride * bpp);
-                b.setPixels((void *)base);
-                SkImageEncoder::EncodeStream(&stream, b,
-                                             SkImageEncoder::kWEBP_Type,
-                                             SkImageEncoder::kDefaultQuality);
-                streamData = stream.copyToData();
-                size = http_header(buf, header_ok, "image/webp", streamData->size());
-                write(client_fd, buf, size);
-                printf(">>>>\n%s-----------\n", buf);
-                write(client_fd, streamData->data(), streamData->size());
-                streamData->unref();
-                stream.reset();
-            }
-            else
-            {
-                fprintf(stderr, "Error capturing screen\n");
-                size = http_header(buf, header_internal_error, "text/plain", 0);
-                write(client_fd, buf, size);
-            }
+            size = http_header(buf, header_not_found, NULL, 0);
+            write(client_fd, buf, size);
         }
         close(client_fd);
     }
@@ -187,6 +209,7 @@ int server_start()
         if (listen(fd, 5) == 0)
         {
             printf("OK\n");
+
             handle_connection(fd);
         }
         else
