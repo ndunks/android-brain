@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <time.h>
@@ -10,6 +11,7 @@
 #include <gui/SurfaceComposerClient.h>
 #include <gui/ISurfaceComposer.h>
 #include <binder/IServiceManager.h>
+#include <powermanager/IPowerManager.h>
 #include <ui/DisplayInfo.h>
 #include <ui/PixelFormat.h>
 #include <SkImageEncoder.h>
@@ -35,6 +37,8 @@ static char buf[65535];
 static ScreenshotClient screenshot;
 uint32_t scalled_width, scalled_height;
 static ssize_t size = 0, bpp;
+static int sleeping_state;
+static pthread_mutex_t mutex1 = PTHREAD_MUTEX_INITIALIZER;
 
 sp<IBinder> display;
 sp<IServiceManager> servicemanager;
@@ -61,6 +65,39 @@ static size_t http_header(char *buf, const char *http_status, const char *type, 
     return header_size;
 }
 
+void *sleeping_check_thread(void *arg)
+{
+    int fd_sleep, fd_wake;
+    size_t ret;
+    char ch;
+    fd_sleep = open("/sys/power/wait_for_fb_sleep", O_RDONLY);
+    fd_wake = open("/sys/power/wait_for_fb_wake", O_RDONLY);
+
+    while (1)
+    {
+        ret = read(fd_sleep, &ch, 0);
+        pthread_mutex_lock(&mutex1);
+        sleeping_state = 1;
+        pthread_mutex_unlock(&mutex1);
+        printf("\n** Device Is sleep.\n");
+
+        ret = read(fd_wake, &ch, 0);
+        pthread_mutex_lock(&mutex1);
+        sleeping_state = 0;
+        pthread_mutex_unlock(&mutex1);
+        printf("\n** Device Is wake.\n");
+    }
+    close(fd_sleep);
+    close(fd_wake);
+    printf("** Sleeping thread exited\n");
+}
+
+void send_text(int fd, const char *txt)
+{
+    size = http_header(buf, header_ok, "text/plain", strlen(txt));
+    write(fd, buf, size);
+    write(fd, txt, strlen(txt));
+}
 void send_dump(int fd)
 {
     char buf[255];
@@ -72,6 +109,7 @@ void send_dump(int fd)
                                 "Content-Type: text/plain\r\n\r\n",
                            http_version, header_ok);
     write(fd, buf, size);
+
     printf("DUMP %s\n", buf);
     int err = service->dump(fd, args);
     if (err != 0)
@@ -85,6 +123,16 @@ void send_screenshot(int fd)
     ssize_t bpp;
     SkBitmap::Config bmpConfig;
     uint32_t format, stride;
+    int is_sleeping;
+    pthread_mutex_lock(&mutex1);
+    is_sleeping = sleeping_state;
+    pthread_mutex_unlock(&mutex1);
+
+    if (is_sleeping)
+    {
+        send_text(fd, "Device sleeping");
+        return;
+    }
 
     if (screenshot.update(display, scalled_width, scalled_height) != NO_ERROR)
     {
@@ -191,12 +239,18 @@ int server_start()
     struct sockaddr_in serveraddr;
     socklen_t addrLen = sizeof(struct sockaddr_in);
     int fd = socket(AF_INET, SOCK_STREAM, 0), opt_reuseaddr = 1;
+    pthread_t th;
 
     if (fd == -1)
     {
         fprintf(stderr, "Fail creating socket\n");
         return 1;
     }
+    if (pthread_create(&th, NULL, sleeping_check_thread, NULL) != 0)
+    {
+        printf("Fail starting sleeping checker thread\n");
+    }
+
     memset(&serveraddr, 0, addrLen);
     serveraddr.sin_family = AF_INET;
     serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);

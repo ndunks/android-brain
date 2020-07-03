@@ -24,7 +24,7 @@ ANDROID_ARGS := \
 	NDK_PROJECT_PATH=null
 
 ANDROID_BUILD := @make  --no-print-dir -f $(ANDROID_NDK_HOME)/build/core/build-local.mk $(ANDROID_ARGS)
-UNLOCK_SCREEN = input keyevent KEYCODE_POWER
+#UNLOCK_SCREEN = input keyevent KEYCODE_POWER
 # && input swipe 360 320 360 900 100
 
 build:
@@ -39,7 +39,7 @@ clean:
 
 exec: build
 	@adb push $(NDK_OUT)/$(APP_ABI)/$(LOCAL_MODULE) /data/local/tmp/ > /dev/null
-	adb shell "$(UNLOCK_SCREEN) 2> /dev/null && \
+	adb shell " \
 		cd /data/local/tmp/ && \
 		busybox chmod +x $(LOCAL_MODULE) && \
 		(pidof $(LOCAL_MODULE) && killall $(LOCAL_MODULE) || true ) && \
